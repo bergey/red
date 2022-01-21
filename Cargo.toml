@@ -1,12 +1,14 @@
 [package]
 name = "red"
 version = "0.1.0"
-authors = ["Daniel Bergey <bergey@simspace.com>"]
+authors = ["Daniel Bergey <bergey@teallabs.org>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# clap = "2.33.3"
-# clap-v3 = "3.0.0-beta.1"
-structopt = "0.3.22"
+clap = { version = "3.0.10", features = ["derive"] }
+term_size = "0.3.1"
+
+[target.'cfg(unix)'.dependencies]
+termios = "0.3.1"
