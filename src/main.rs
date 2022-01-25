@@ -31,6 +31,16 @@ fn setup_term() -> File {
     tty
 }
 
+#[cfg(unix)]
+fn reset_term() {
+    use termios::*;
+
+    let tty = File::open("/dev/tty").unwrap();
+    let mut term = Termios::from_fd(tty.as_raw_fd()).unwrap(); // Unix only
+    term.c_lflag |= ICANON | ECHO;
+    tcsetattr(tty.as_raw_fd(), TCSADRAIN, &term).unwrap();
+}
+
 fn pager<R : Read, W : Write>(reader :  &mut R, writer : &mut W ) {
     let mut buffer = [0; 1024];
 
@@ -83,8 +93,8 @@ fn pager<R : Read, W : Write>(reader :  &mut R, writer : &mut W ) {
             for byte in tty.bytes() {
                 match byte.unwrap() {
                     b'q' | 27 => {
-                        break 'chunks;
-                    }
+                        break 'chunks; // TODO exit?  no next file
+                    },
                     _ => (),
                 }
             }
@@ -95,8 +105,9 @@ fn pager<R : Read, W : Write>(reader :  &mut R, writer : &mut W ) {
 fn main() -> std::io::Result<()> {
     let args = Cli::parse();
     let stdout = io::stdout();
-    let mut out_lock = stdout.lock();
+    let mut stdout = stdout.lock();
     let mut f = File::open(args.path)?;
-    pager(&mut f, &mut out_lock);
+    pager(&mut f, &mut stdout);
+    reset_term();
     Ok(())
 }
