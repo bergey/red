@@ -1,5 +1,10 @@
 use clap::Parser;
 
+use crossterm::{
+    cursor,
+    style::{self, Stylize},
+    terminal, ExecutableCommand, QueueableCommand,
+};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
@@ -104,10 +109,15 @@ fn pager<R: Read, W: Write>(reader: &mut R, writer: &mut W) {
 
 fn main() -> std::io::Result<()> {
     let args = Cli::parse();
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
-    let mut f = File::open(args.path)?;
-    pager(&mut f, &mut stdout);
-    reset_term();
+    let mut stdout = io::stdout();
+    stdout.execute(terminal::Clear(terminal::ClearType::All))?;
+    stdout
+        .queue(cursor::MoveTo(5, 5))?
+        .queue(style::PrintStyledContent("Hello, world\n".red()))?
+        .flush()?;
+    // let mut stdout = stdout.lock();
+    // let mut f = File::open(args.path)?;
+    // pager(&mut f, &mut stdout);
+    // reset_term();
     Ok(())
 }
