@@ -1,14 +1,14 @@
 use clap::Parser;
 
 use std::fs::File;
-use std::io::{self, Write, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
 
 // only unix / darwin for now
 #[cfg(unix)]
-extern crate termios;
-#[cfg(unix)]
 extern crate term_size;
+#[cfg(unix)]
+extern crate termios;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -24,6 +24,7 @@ fn setup_term() -> File {
 
     let tty = File::open("/dev/tty").unwrap();
     let mut term = Termios::from_fd(tty.as_raw_fd()).unwrap(); // Unix only
+
     // Unset canonical mode, so we get characters immediately
     // Disable local echo
     term.c_lflag &= !(ICANON | ECHO);
@@ -41,25 +42,25 @@ fn reset_term() {
     tcsetattr(tty.as_raw_fd(), TCSADRAIN, &term).unwrap();
 }
 
-fn pager<R : Read, W : Write>(reader :  &mut R, writer : &mut W ) {
+fn pager<R: Read, W: Write>(reader: &mut R, writer: &mut W) {
     let mut buffer = [0; 1024];
 
     let (term_columns, term_lines) = match term_size::dimensions() {
-        Some((w, h)) => (w, h-1),
-        None => (80, 30)
+        Some((w, h)) => (w, h - 1),
+        None => (80, 30),
     };
 
-    let mut want_lines = term_lines;  // start with a full page; count down
-    let mut columns = term_columns;   // for consistency, count down
+    let mut want_lines = term_lines; // start with a full page; count down
+    let mut columns = term_columns; // for consistency, count down
 
     'chunks: while let Ok(size) = reader.read(&mut buffer) {
         if size == 0 {
             break;
         }
-        let mut write_start = 0;    // start of next write
-        let mut point = 0;          // next char when counting lines
+        let mut write_start = 0; // start of next write
+        let mut point = 0; // next char when counting lines
 
-            writer.flush().unwrap();
+        writer.flush().unwrap();
 
         loop {
             // find a subrange with the right number of lines
@@ -69,8 +70,7 @@ fn pager<R : Read, W : Write>(reader :  &mut R, writer : &mut W ) {
                     want_lines -= 1;
                     columns = term_columns;
                     point += 1;
-                }
-                else if columns == 0 {
+                } else if columns == 0 {
                     // visual line, wrapped by terminal
                     want_lines -= 1;
                     columns = term_columns;
@@ -81,7 +81,7 @@ fn pager<R : Read, W : Write>(reader :  &mut R, writer : &mut W ) {
                 }
                 if point == size {
                     writer.write(&buffer[write_start..point]).unwrap();
-                    continue 'chunks
+                    continue 'chunks;
                 }
             }
 
@@ -94,7 +94,7 @@ fn pager<R : Read, W : Write>(reader :  &mut R, writer : &mut W ) {
                 match byte.unwrap() {
                     b'q' | 27 => {
                         break 'chunks; // TODO exit?  no next file
-                    },
+                    }
                     _ => (),
                 }
             }
