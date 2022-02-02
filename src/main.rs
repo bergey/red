@@ -5,6 +5,7 @@ use crossterm::{
     style::{self, Color, Stylize},
     terminal, ExecutableCommand, QueueableCommand,
 };
+use std::cmp::min;
 use std::fs::{self, File};
 use std::io::{self, Read, Result, Stdout, Write};
 use unicode_segmentation::UnicodeSegmentation;
@@ -77,10 +78,13 @@ fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<Disp
             column = 0;
             line += 1;
             if line == height {
-                return complete(stdout, DisplayInfo {
-                    line_lengths: line_lengths,
-                    next_char: i
-                });
+                return complete(
+                    stdout,
+                    DisplayInfo {
+                        line_lengths: line_lengths,
+                        next_char: i,
+                    },
+                );
             }
             stdout.queue(cursor::MoveToNextLine(1))?;
         }
@@ -89,10 +93,13 @@ fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<Disp
             stdout.queue(style::Print(g))?;
         }
     }
-    return complete(stdout, DisplayInfo {
-        next_char: s.len(),
-        line_lengths: line_lengths
-    });
+    return complete(
+        stdout,
+        DisplayInfo {
+            next_char: s.len(),
+            line_lengths: line_lengths,
+        },
+    );
 }
 
 // is the first character a newline of some sort
@@ -116,33 +123,45 @@ fn main() -> Result<()> {
     let (w, h) = terminal::size()?;
     let contents = fs::read_to_string(args.path)?;
     let display_info = display(&mut stdout, &contents, w, h)?;
+    let mut target_column = 0;
     loop {
         use Action::*;
         let act = await_input()?;
+        let (c, r) = cursor::position()?;
         match act {
             Quit => break,
             Up => {
-                stdout.execute(cursor::MoveUp(1))?;
-            },
+                // TODO handle r=0
+                stdout.execute(cursor::MoveTo(
+                    min(target_column, display_info.line_lengths[(r - 1) as usize]),
+                    r - 1,
+                ))?;
+            }
             Down => {
-                stdout.execute(cursor::MoveDown(1))?;
-            },
+                // TODO handle r=h
+                stdout.execute(cursor::MoveTo(
+                    min(target_column, display_info.line_lengths[(r + 1) as usize]),
+                    r + 1,
+                ))?;
+            }
             Right => {
-                let (c, r) = cursor::position()?;
-                if c+1 > display_info.line_lengths[r as usize] {
-                    stdout.execute(cursor::MoveTo(0, r+1))?;
+                if c + 1 > display_info.line_lengths[r as usize] {
+                    target_column = 0;
+                    stdout.execute(cursor::MoveTo(0, r + 1))?;
                 } else {
+                    target_column = c + 1;
                     stdout.execute(cursor::MoveRight(1))?;
                 }
-            },
+            }
             Left => {
-                let (c, r) = cursor::position()?;
                 if c == 0 {
-                    stdout.execute(cursor::MoveTo(display_info.line_lengths[(r-1) as usize], r-1))?;
+                    target_column = display_info.line_lengths[(r - 1) as usize];
+                    stdout.execute(cursor::MoveTo(target_column, r - 1))?;
                 } else {
+                    target_column = c - 1;
                     stdout.execute(cursor::MoveLeft(1))?;
                 }
-            },
+            }
         };
     }
     stdout
