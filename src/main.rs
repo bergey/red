@@ -23,11 +23,24 @@ struct Cli {
     path: std::path::PathBuf,
 }
 
-fn await_input() -> Result<()> {
+enum Action {
+    Quit,
+    Up,
+    Down,
+    Left,
+    Right
+}
+
+fn await_input() -> Result<Action> {
     loop {
+        use Action::{*};
         match read()? {
             Event::Key(event) => match event.code {
-                Char('q') => return Ok(()),
+                Char('q') => return Ok(Quit),
+                Char('k') => return Ok(Up),
+                Char('j') => return Ok(Down),
+                Char('h') => return Ok(Left),
+                Char('l') => return Ok(Right),
                 _ => continue,
             },
             _ => continue,
@@ -76,15 +89,26 @@ fn is_newline(s: &str) -> bool {
 fn main() -> Result<()> {
     let args = Cli::parse();
     let mut stdout = io::stdout();
-    stdout.queue(terminal::Clear(terminal::ClearType::All))?;
-    stdout.queue(style::SetForegroundColor(Color::Red))?;
-    stdout.queue(cursor::MoveTo(0,0))?;
-    stdout.flush()?;
+    stdout
+        .queue(terminal::Clear(terminal::ClearType::All))?
+        .queue(style::SetForegroundColor(Color::Red))?
+        .queue(cursor::MoveTo(0,0))?
+        .flush()?;
     terminal::enable_raw_mode()?;
     let (c, r) = terminal::size()?;
     let contents = fs::read_to_string(args.path)?;
     let _next_char = display(&mut stdout, &contents, c, r)?;
-    await_input()?;
+    loop {
+        use Action::{*};
+        let act = await_input()?;
+        match act {
+            Quit => break,
+            Up => stdout.execute(cursor::MoveUp(1))?,
+            Down => stdout.execute(cursor::MoveDown(1))?,
+            Right => stdout.execute(cursor::MoveRight(1))?,
+            Left => stdout.execute(cursor::MoveLeft(1))?,
+        };
+    }
     terminal::disable_raw_mode()?;
     Ok(())
 }
