@@ -54,6 +54,14 @@ fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<usiz
     let mut line = 0;
     let mut column = 0;
 
+    stdout.queue(cursor::SavePosition)?;
+
+    let complete = |stdout: &mut Stdout, pt: usize| {
+        stdout.queue(cursor::RestorePosition)?;
+        stdout.flush()?;
+        Ok(pt)
+    };
+
     // TODO consider word splitting here
     // need to be careful about words longer than line
     for (i, g) in s.grapheme_indices(false) {
@@ -62,8 +70,7 @@ fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<usiz
             column = 0;
             line += 1;
             if line == height {
-                stdout.flush()?;
-                return Ok(i);
+                return complete(stdout, i);
             }
             // stdout.queue(cursor::MoveTo(column, line))?;
             stdout.queue(cursor::MoveToNextLine(1))?;
@@ -73,8 +80,7 @@ fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<usiz
             stdout.queue(style::Print(g))?;
         }
     }
-    stdout.flush()?;
-    Ok(s.len())
+    return complete(stdout, s.len());
 }
 
 // is the first character a newline of some sort
@@ -109,6 +115,10 @@ fn main() -> Result<()> {
             Left => stdout.execute(cursor::MoveLeft(1))?,
         };
     }
+    stdout
+        .queue(terminal::Clear(terminal::ClearType::All))?
+        .queue(cursor::MoveTo(0,0))?
+        .flush()?;
     terminal::disable_raw_mode()?;
     Ok(())
 }
