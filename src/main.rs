@@ -1,13 +1,13 @@
 use clap::Parser;
-
 use crossterm::{
     cursor,
-    style::{self, Stylize},
+    event::{read, Event, KeyCode, KeyCode::Char},
+    style::{self, Stylize, Color},
     terminal, ExecutableCommand, QueueableCommand,
 };
-use std::fs::File;
-use std::io::{self, Read, Write};
-use std::os::unix::io::AsRawFd;
+use std::fs::{self, File};
+use std::io::{self, Read, Result, Stdout, Write};
+use unicode_segmentation::UnicodeSegmentation;
 
 // only unix / darwin for now
 #[cfg(unix)]
@@ -23,101 +23,68 @@ struct Cli {
     path: std::path::PathBuf,
 }
 
-#[cfg(unix)]
-fn setup_term() -> File {
-    use termios::*;
-
-    let tty = File::open("/dev/tty").unwrap();
-    let mut term = Termios::from_fd(tty.as_raw_fd()).unwrap(); // Unix only
-
-    // Unset canonical mode, so we get characters immediately
-    // Disable local echo
-    term.c_lflag &= !(ICANON | ECHO);
-    tcsetattr(tty.as_raw_fd(), TCSADRAIN, &term).unwrap();
-    tty
-}
-
-#[cfg(unix)]
-fn reset_term() {
-    use termios::*;
-
-    let tty = File::open("/dev/tty").unwrap();
-    let mut term = Termios::from_fd(tty.as_raw_fd()).unwrap(); // Unix only
-    term.c_lflag |= ICANON | ECHO;
-    tcsetattr(tty.as_raw_fd(), TCSADRAIN, &term).unwrap();
-}
-
-fn pager<R: Read, W: Write>(reader: &mut R, writer: &mut W) {
-    let mut buffer = [0; 1024];
-
-    let (term_columns, term_lines) = match term_size::dimensions() {
-        Some((w, h)) => (w, h - 1),
-        None => (80, 30),
-    };
-
-    let mut want_lines = term_lines; // start with a full page; count down
-    let mut columns = term_columns; // for consistency, count down
-
-    'chunks: while let Ok(size) = reader.read(&mut buffer) {
-        if size == 0 {
-            break;
-        }
-        let mut write_start = 0; // start of next write
-        let mut point = 0; // next char when counting lines
-
-        writer.flush().unwrap();
-
-        loop {
-            // find a subrange with the right number of lines
-            while want_lines > 0 {
-                let c = buffer[point];
-                if c == b'\n' {
-                    want_lines -= 1;
-                    columns = term_columns;
-                    point += 1;
-                } else if columns == 0 {
-                    // visual line, wrapped by terminal
-                    want_lines -= 1;
-                    columns = term_columns;
-                    // don't increment point; this char needs to start the next line
-                } else {
-                    point += 1;
-                    columns -= 1;
-                }
-                if point == size {
-                    writer.write(&buffer[write_start..point]).unwrap();
-                    continue 'chunks;
-                }
-            }
-
-            writer.write(&buffer[write_start..point]).unwrap();
-            writer.flush().unwrap();
-            write_start = point;
-
-            let tty = setup_term();
-            for byte in tty.bytes() {
-                match byte.unwrap() {
-                    b'q' | 27 => {
-                        break 'chunks; // TODO exit?  no next file
-                    }
-                    _ => (),
-                }
-            }
+fn await_input() -> Result<()> {
+    loop {
+        match read()? {
+            Event::Key(event) => match event.code {
+                Char('q') => return Ok(()),
+                _ => continue,
+            },
+            _ => continue,
         }
     }
 }
 
-fn main() -> std::io::Result<()> {
+// display provided string
+// returns the byte index immediately after the last displayed grapheme
+fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<usize> {
+    let mut line = 0;
+    let mut column = 0;
+
+    // TODO consider word splitting here
+    // need to be careful about words longer than line
+    for (i, g) in s.grapheme_indices(false) {
+        // TODO handle double-width chars in monospace font
+        if column == width || is_newline(g) {
+            column = 0;
+            line += 1;
+            if line == height {
+                stdout.flush()?;
+                return Ok(i);
+            }
+            // stdout.queue(cursor::MoveTo(column, line))?;
+            stdout.queue(cursor::MoveToNextLine(1))?;
+        }
+        if !is_newline(g) {
+            column += 1;
+            stdout.queue(style::Print(g))?;
+        }
+    }
+    stdout.flush()?;
+    Ok(s.len())
+}
+
+// is the first character a newline of some sort
+fn is_newline(s: &str) -> bool {
+    match s.bytes().nth(0) {
+        Some(b'\n') => true,
+        Some(b'\r') => true,
+        _ => false,
+    }
+}
+
+fn main() -> Result<()> {
     let args = Cli::parse();
     let mut stdout = io::stdout();
-    stdout.execute(terminal::Clear(terminal::ClearType::All))?;
-    stdout
-        .queue(cursor::MoveTo(5, 5))?
-        .queue(style::PrintStyledContent("Hello, world\n".red()))?
-        .flush()?;
-    // let mut stdout = stdout.lock();
-    // let mut f = File::open(args.path)?;
-    // pager(&mut f, &mut stdout);
-    // reset_term();
+    stdout.queue(terminal::Clear(terminal::ClearType::All))?;
+    stdout.queue(style::SetForegroundColor(Color::Red))?;
+    stdout.queue(cursor::MoveTo(0,0))?;
+    stdout.flush()?;
+    terminal::enable_raw_mode()?;
+    let (c, r) = terminal::size()?;
+    let contents = fs::read_to_string(args.path)?;
+    let _next_char = display(&mut stdout, &contents, c, r)?;
+    await_input()?;
+    terminal::disable_raw_mode()?;
     Ok(())
 }
