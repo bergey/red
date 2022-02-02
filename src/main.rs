@@ -2,7 +2,7 @@ use clap::Parser;
 use crossterm::{
     cursor,
     event::{read, Event, KeyCode, KeyCode::Char},
-    style::{self, Stylize, Color},
+    style::{self, Color, Stylize},
     terminal, ExecutableCommand, QueueableCommand,
 };
 use std::fs::{self, File};
@@ -28,12 +28,17 @@ enum Action {
     Up,
     Down,
     Left,
-    Right
+    Right,
+}
+
+struct DisplayInfo {
+    next_char: usize,
+    line_lengths: Vec<u16>,
 }
 
 fn await_input() -> Result<Action> {
     loop {
-        use Action::{*};
+        use Action::*;
         match read()? {
             Event::Key(event) => match event.code {
                 Char('q') => return Ok(Quit),
@@ -50,16 +55,17 @@ fn await_input() -> Result<Action> {
 
 // display provided string
 // returns the byte index immediately after the last displayed grapheme
-fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<usize> {
+fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<DisplayInfo> {
     let mut line = 0;
     let mut column = 0;
+    let mut line_lengths = Vec::new();
 
     stdout.queue(cursor::SavePosition)?;
 
-    let complete = |stdout: &mut Stdout, pt: usize| {
+    let complete = |stdout: &mut Stdout, info: DisplayInfo| {
         stdout.queue(cursor::RestorePosition)?;
         stdout.flush()?;
-        Ok(pt)
+        Ok(info)
     };
 
     // TODO consider word splitting here
@@ -67,12 +73,15 @@ fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<usiz
     for (i, g) in s.grapheme_indices(false) {
         // TODO handle double-width chars in monospace font
         if column == width || is_newline(g) {
+            line_lengths.push(column);
             column = 0;
             line += 1;
             if line == height {
-                return complete(stdout, i);
+                return complete(stdout, DisplayInfo {
+                    line_lengths: line_lengths,
+                    next_char: i
+                });
             }
-            // stdout.queue(cursor::MoveTo(column, line))?;
             stdout.queue(cursor::MoveToNextLine(1))?;
         }
         if !is_newline(g) {
@@ -80,7 +89,10 @@ fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<usiz
             stdout.queue(style::Print(g))?;
         }
     }
-    return complete(stdout, s.len());
+    return complete(stdout, DisplayInfo {
+        next_char: s.len(),
+        line_lengths: line_lengths
+    });
 }
 
 // is the first character a newline of some sort
@@ -98,26 +110,44 @@ fn main() -> Result<()> {
     stdout
         .queue(terminal::Clear(terminal::ClearType::All))?
         .queue(style::SetForegroundColor(Color::Red))?
-        .queue(cursor::MoveTo(0,0))?
+        .queue(cursor::MoveTo(0, 0))?
         .flush()?;
     terminal::enable_raw_mode()?;
-    let (c, r) = terminal::size()?;
+    let (w, h) = terminal::size()?;
     let contents = fs::read_to_string(args.path)?;
-    let _next_char = display(&mut stdout, &contents, c, r)?;
+    let display_info = display(&mut stdout, &contents, w, h)?;
     loop {
-        use Action::{*};
+        use Action::*;
         let act = await_input()?;
         match act {
             Quit => break,
-            Up => stdout.execute(cursor::MoveUp(1))?,
-            Down => stdout.execute(cursor::MoveDown(1))?,
-            Right => stdout.execute(cursor::MoveRight(1))?,
-            Left => stdout.execute(cursor::MoveLeft(1))?,
+            Up => {
+                stdout.execute(cursor::MoveUp(1))?;
+            },
+            Down => {
+                stdout.execute(cursor::MoveDown(1))?;
+            },
+            Right => {
+                let (c, r) = cursor::position()?;
+                if c+1 > display_info.line_lengths[r as usize] {
+                    stdout.execute(cursor::MoveTo(0, r+1))?;
+                } else {
+                    stdout.execute(cursor::MoveRight(1))?;
+                }
+            },
+            Left => {
+                let (c, r) = cursor::position()?;
+                if c == 0 {
+                    stdout.execute(cursor::MoveTo(display_info.line_lengths[(r-1) as usize], r-1))?;
+                } else {
+                    stdout.execute(cursor::MoveLeft(1))?;
+                }
+            },
         };
     }
     stdout
         .queue(terminal::Clear(terminal::ClearType::All))?
-        .queue(cursor::MoveTo(0,0))?
+        .queue(cursor::MoveTo(0, 0))?
         .flush()?;
     terminal::disable_raw_mode()?;
     Ok(())
