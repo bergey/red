@@ -30,6 +30,7 @@ enum Action {
     Down,
     Left,
     Right,
+    PageDown,
 }
 
 struct DisplayInfo {
@@ -47,6 +48,7 @@ fn await_input() -> Result<Action> {
                 Char('j') => return Ok(Down),
                 Char('h') => return Ok(Left),
                 Char('l') => return Ok(Right),
+                Char(' ') => return Ok(PageDown),
                 _ => continue,
             },
             _ => continue,
@@ -56,12 +58,21 @@ fn await_input() -> Result<Action> {
 
 // display provided string
 // returns the byte index immediately after the last displayed grapheme
-fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<DisplayInfo> {
+fn display(
+    stdout: &mut Stdout,
+    s: &str,
+    pt: usize,
+    width: u16,
+    height: u16,
+) -> Result<DisplayInfo> {
     let mut line = 0;
     let mut column = 0;
     let mut line_lengths = Vec::new();
 
-    stdout.queue(cursor::SavePosition)?;
+    stdout
+        .queue(cursor::SavePosition)?
+        .queue(cursor::MoveTo(0, 0))?
+        .queue(terminal::Clear(terminal::ClearType::All))?;
 
     let complete = |stdout: &mut Stdout, info: DisplayInfo| {
         stdout.queue(cursor::RestorePosition)?;
@@ -71,7 +82,7 @@ fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<Disp
 
     // TODO consider word splitting here
     // need to be careful about words longer than line
-    for (i, g) in s.grapheme_indices(false) {
+    for (i, g) in s[pt..].grapheme_indices(false) {
         // TODO handle double-width chars in monospace font
         if column == width || is_newline(g) {
             line_lengths.push(column);
@@ -82,7 +93,7 @@ fn display(stdout: &mut Stdout, s: &str, width: u16, height: u16) -> Result<Disp
                     stdout,
                     DisplayInfo {
                         line_lengths: line_lengths,
-                        next_char: i,
+                        next_char: pt + i,
                     },
                 );
             }
@@ -122,7 +133,7 @@ fn main() -> Result<()> {
     terminal::enable_raw_mode()?;
     let (w, h) = terminal::size()?;
     let contents = fs::read_to_string(args.path)?;
-    let display_info = display(&mut stdout, &contents, w, h)?;
+    let mut display_info = display(&mut stdout, &contents, 0, w, h)?;
     let mut target_column = 0;
     loop {
         use Action::*;
@@ -130,6 +141,7 @@ fn main() -> Result<()> {
         let (c, r) = cursor::position()?;
         match act {
             Quit => break,
+            // TODO make these cases more uniform
             Up => {
                 // TODO handle r=0
                 stdout.execute(cursor::MoveTo(
@@ -160,6 +172,11 @@ fn main() -> Result<()> {
                 } else {
                     target_column = c - 1;
                     stdout.execute(cursor::MoveLeft(1))?;
+                }
+            }
+            PageDown => {
+                if display_info.next_char < contents.len() {
+                    display_info = display(&mut stdout, &contents, display_info.next_char, w, h)?
                 }
             }
         };
